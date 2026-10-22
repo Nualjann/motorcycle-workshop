@@ -7,7 +7,10 @@ import './index.css'
 const localApiUrl = 'http://localhost:5000';
 const productionApiUrl = 'https://api.nualjan.tech';
 const isProductionHost = ['nualjan.tech', 'www.nualjan.tech'].includes(window.location.hostname);
-const apiUrl = import.meta.env.VITE_API_URL || (isProductionHost ? productionApiUrl : localApiUrl);
+// Never let a local Vite environment value send production requests to the user's computer.
+const apiUrl = isProductionHost
+  ? productionApiUrl
+  : (import.meta.env.VITE_API_URL || localApiUrl);
 // Rewrite legacy localhost URLs so the same frontend works after deployment.
 axios.interceptors.request.use(config => {
   if (config.url?.startsWith(localApiUrl) && apiUrl !== localApiUrl) {
