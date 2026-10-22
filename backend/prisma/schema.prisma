@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+// หมวดหมู่สินค้า
+model Category {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  parts Part[]
+}
+
+// สินค้าและอะไหล่ในคลัง
+model Part {
+  id           Int              @id @default(autoincrement())
+  name         String
+  imageUrl     String?
+  costPrice    Decimal          @default(0) @db.Decimal(12, 2)
+  price        Decimal          @db.Decimal(12, 2)
+  stock        Int              @default(0)
+  storageLocation String?
+  categoryId   Int
+  category     Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  partsUsed    RepairPartUsed[]
+  posSaleItems PosSaleItem[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+// งานซ่อม
+model RepairJob {
+  id           Int              @id @default(autoincrement())
+  tracking     String           @unique
+  plate        String
+  customerName String
+  phone        String
+  issue        String
+  mechanic     String           @default("ช่างเอก")
+  status       String           @default("รอคิว") // รอคิว, กำลังซ่อม, เสร็จสิ้น
+  wage         Decimal          @default(100) @db.Decimal(12, 2)
+  total        Decimal          @default(100) @db.Decimal(12, 2)
+  paymentMethod String?
+  paymentTransRef String?      @unique
+  paid         Boolean          @default(false)
+  archived     Boolean          @default(false)
+  partsUsed    RepairPartUsed[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+// อะไหล่ที่ถูกเบิกใช้ในงานซ่อม
+model RepairPartUsed {
+  id        Int       @id @default(autoincrement())
+  jobId     Int
+  partId    Int
+  qty       Int
+  costPrice Decimal   @default(0) @db.Decimal(12, 2)
+  price     Decimal   @db.Decimal(12, 2) // ราคา ณ วันที่ซ่อม
+  job       RepairJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  part      Part      @relation(fields: [partId], references: [id])
+}
+
+// ยอดขายหน้าร้าน (POS)
+model PosSale {
+  id            Int           @id @default(autoincrement())
+  receiptNo     String        @unique
+  paymentMethod String
+  paymentTransRef String?     @unique
+  total         Decimal          @db.Decimal(12, 2)
+  items         PosSaleItem[]
+  createdAt     DateTime      @default(now())
+}
+
+model PaymentVerification {
+  id        Int      @id @default(autoincrement())
+  transRef  String   @unique
+  amount    Decimal   @db.Decimal(12, 2)
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model SystemSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// รายการย่อยในบิลขายหน้าร้าน
+model PosSaleItem {
+  id        Int     @id @default(autoincrement())
+  saleId    Int
+  partId    Int
+  qty       Int
+  costPrice Decimal   @default(0) @db.Decimal(12, 2)
+  price     Decimal   @db.Decimal(12, 2)
+  sale      PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  part      Part    @relation(fields: [partId], references: [id])
+}
+
+// ผู้ใช้
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  name      String
+  role      String   @default("staff") // "admin" | "mechanic" | "staff"
+  createdAt DateTime @default(now())
+}

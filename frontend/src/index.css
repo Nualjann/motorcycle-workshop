@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --theme-primary: #2563eb;
+}
+
+[data-theme='emerald'] .bg-blue-600 { background-color: var(--theme-primary) !important; }
+[data-theme='emerald'] .hover\:bg-blue-700:hover { background-color: #047857 !important; }
+[data-theme='orange'] .bg-blue-600 { background-color: var(--theme-primary) !important; }
+[data-theme='orange'] .hover\:bg-blue-700:hover { background-color: #c2410c !important; }
+[data-theme='red'] .bg-blue-600 { background-color: var(--theme-primary) !important; }
+[data-theme='red'] .hover\:bg-blue-700:hover { background-color: #b91c1c !important; }
+[data-theme='emerald'] .text-blue-600,
+[data-theme='orange'] .text-blue-600,
+[data-theme='red'] .text-blue-600 { color: var(--theme-primary) !important; }
+[data-theme='custom'] .bg-blue-600 { background-color: var(--theme-primary) !important; }
+[data-theme='custom'] .hover\:bg-blue-700:hover { background-color: var(--theme-primary-hover) !important; filter: brightness(0.9); }
+[data-theme='custom'] .text-blue-600 { color: var(--theme-primary) !important; }
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  .print-ticket {
+    width: 80mm;
+    max-width: 80mm;
+    box-sizing: border-box;
+    margin: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .receipt-print {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    box-sizing: border-box;
+    margin: 0 !important;
+    border: 0;
+    box-shadow: none;
+  }
+
+}

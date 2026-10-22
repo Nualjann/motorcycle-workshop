@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: moto_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: moto_admin
+      POSTGRES_PASSWORD: moto_password123
+      POSTGRES_DB: motorcycle_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - moto_pgdata2:/var/lib/postgresql/data
+
+volumes:
+  moto_pgdata2:
+    name: motorcycle-workshop_moto_pgdata2
