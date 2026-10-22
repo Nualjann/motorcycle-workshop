@@ -6,4 +6,5 @@ dist/
 build/
 *.log
 *.sql
+!backend/prisma/migrations/**/*.sql
 prisma/*.db

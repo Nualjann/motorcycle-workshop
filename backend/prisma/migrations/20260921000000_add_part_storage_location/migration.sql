@@ -1,0 +1,1 @@
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "storageLocation" TEXT;
