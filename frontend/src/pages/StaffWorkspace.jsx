@@ -5,7 +5,7 @@ import {
   ShoppingCart, Wrench, Plus, ArrowLeft, 
   QrCode, Banknote, Printer, CheckCircle2, Clock, 
   Trash2, PackagePlus, FileText, DollarSign, Package,
-  AlertCircle, Check, Tag, Menu, Search, Minus
+  AlertCircle, AlertTriangle, Check, Tag, Menu, Search, Minus, ChevronRight, X, Shield
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 
@@ -20,7 +20,9 @@ export default function StaffWorkspace({
   mechanics = [],
   settings = {}
 }) {
-  const configuredDefaultWage = Number(settings.defaultWage);
+  const configuredDefaultWage = Number(settings?.defaultWage ?? 100);
+  const configuredThreshold = Number(settings?.lowStockThreshold);
+  const lowStockThreshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0 ? configuredThreshold : 10;
   // Keep the on-screen receipt readable; print styles reduce it to 80mm.
   const receiptStyle = { width: '100%', maxWidth: '100%' };
   const [mainMode, setMainMode] = useState('pos');
@@ -418,56 +420,96 @@ export default function StaffWorkspace({
       {/* ========================================================= */}
       {/* แถบเมนูด้านซ้าย (Sidebar Layout) */}
       {/* ========================================================= */}
-      <div className="md:hidden w-full flex justify-start mb-2 relative z-[55]">
-        <button
-          type="button"
+      {/* แถบแฮมเบอร์เกอร์บนมือถือ (Mobile Navigation Header Bar) */}
+      <div className="md:hidden w-full mb-3">
+        <div 
           onClick={() => setIsStaffMenuOpen(true)}
-          className="w-11 h-11 bg-slate-900 text-white rounded-lg flex items-center justify-center shadow-sm"
-          aria-label="เปิดเมนูพนักงาน"
+          className="bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-2.5 px-3.5 shadow-sm flex items-center justify-between cursor-pointer transition active:scale-[0.99]"
         >
-          <Menu className="w-5 h-5" />
-        </button>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm">
+              <Menu className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-slate-400 leading-tight">เมนูพนักงาน</p>
+              <p className="text-sm font-bold text-slate-800 leading-tight mt-0.5">
+                {mainMode === 'pos' ? 'ระบบขายหน้าร้าน (POS)' : 'ระบบจัดการงานซ่อม'}
+              </p>
+            </div>
+          </div>
+          <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 text-slate-400 flex items-center justify-center">
+            <ChevronRight className="w-4 h-4" />
+          </div>
+        </div>
       </div>
+
+      {/* Backdrop Overlay บนมือถือ */}
       {isStaffMenuOpen && (
         <div
-          className="md:hidden fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[1px]"
+          className="md:hidden fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
           onClick={() => setIsStaffMenuOpen(false)}
           aria-hidden="true"
         />
       )}
-      <div className={`${isStaffMenuOpen ? 'fixed top-32 left-0 z-50 h-[calc(100vh-8rem)] w-max min-w-[220px] max-w-[85vw] animate-in fade-in slide-in-from-left duration-200' : 'hidden'} md:block md:fixed md:inset-y-0 md:left-0 md:z-10 md:h-auto md:w-64 md:p-0 shrink-0`}>
-        <div className="bg-white border border-slate-200 border-l-4 border-l-blue-600 rounded-none h-full w-full md:w-64 p-3 shadow-2xl flex flex-col gap-2 overflow-y-auto">
-          <div className="hidden md:flex px-3 py-3 text-slate-600 items-center gap-3 whitespace-nowrap">
-            <Menu className="w-5 h-5 shrink-0" />
-            <span className="font-semibold text-sm">เมนูพนักงาน</span>
+
+      {/* Drawer เมนูบนมือถือ & Sidebar บน Desktop */}
+      <aside 
+        className={`
+          ${isStaffMenuOpen ? 'fixed inset-y-0 left-0 z-[75] w-72 max-w-[85vw] animate-in slide-in-from-left duration-200 flex flex-col' : 'hidden'}
+          md:block md:fixed md:inset-y-0 md:left-0 md:z-10 md:h-auto md:w-64 md:p-0 shrink-0
+        `}
+      >
+        <div className="bg-white border-r border-slate-200 h-full w-full p-4 shadow-2xl md:shadow-none flex flex-col gap-2 overflow-y-auto">
+          {/* Header เมนู */}
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold border border-blue-100">
+                <Wrench className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900 leading-tight">เมนูพนักงาน</h4>
+                <p className="text-[11px] text-slate-400 leading-tight">MotoFix Workspace</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsStaffMenuOpen(false)}
+              className="md:hidden p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+              aria-label="ปิดเมนู"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <h3 className="hidden">
-            เมนูพนักงาน
-          </h3>
-          <button
-            onClick={() => selectStaffMode('pos')}
-            className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${
-              mainMode === 'pos' 
-                ? 'bg-blue-600 text-white shadow-sm' 
-                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}
-          >
-            <ShoppingCart className="w-5 h-5 shrink-0" /> 
-            <span>ระบบหน้าร้าน</span>
-          </button>
-          <button
-            onClick={() => selectStaffMode('repair')}
-            className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${
-              mainMode === 'repair' 
-                ? 'bg-blue-600 text-white shadow-sm' 
-                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}
-          >
-            <Wrench className="w-5 h-5 shrink-0" /> 
-            <span>ระบบงานซ่อม</span>
-          </button>
+
+          {/* รายการเมนูหลัก */}
+          <div className="space-y-1 flex-1">
+            <button
+              type="button"
+              onClick={() => selectStaffMode('pos')}
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${
+                mainMode === 'pos' 
+                  ? 'bg-blue-600 text-white shadow-sm' 
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <ShoppingCart className="w-5 h-5 shrink-0" /> 
+              <span>ระบบขายหน้าร้าน (POS)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectStaffMode('repair')}
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${
+                mainMode === 'repair' 
+                  ? 'bg-blue-600 text-white shadow-sm' 
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <Wrench className="w-5 h-5 shrink-0" /> 
+              <span>ระบบจัดการงานซ่อม</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </aside>
 
       {/* ========================================================= */}
       {/* พื้นที่เนื้อหาหลักด้านขวา (Main Content) */}
@@ -512,9 +554,19 @@ export default function StaffWorkspace({
                               <Wrench className="w-8 h-8 text-slate-300 group-hover:text-blue-300" />
                             )}
                           </div>
-                          <h4 className="font-bold text-slate-800 text-sm line-clamp-2" title={part.name}>{part.name}</h4>
+                          <div className="flex items-start justify-between gap-1">
+                            <h4 className="font-bold text-slate-800 text-sm line-clamp-2" title={part.name}>{part.name}</h4>
+                            {part.stock <= lowStockThreshold && (
+                              <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-bold border flex items-center gap-0.5 ${part.stock === 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                {part.stock === 0 ? 'หมด' : 'ใกล้หมด'}
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200 mt-1 inline-block">{part.category}</span>
-                          <p className="text-xs text-slate-500 mt-1">คงเหลือ: <span className="font-semibold text-slate-700">{part.stock}</span> ชิ้น</p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            คงเหลือ: <span className={`font-semibold ${part.stock <= lowStockThreshold ? (part.stock === 0 ? 'text-rose-600' : 'text-amber-600') : 'text-slate-700'}`}>{part.stock}</span> ชิ้น
+                          </p>
                           <p className="text-base font-bold text-blue-600 mt-1">฿{part.price}</p>
                         </div>
                         <button

@@ -141,6 +141,7 @@ exports.deletePart = async (req, res) => {
 
 exports.importParts = async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+
   if (rows.length === 0) {
     return res.status(400).json({ error: 'ไม่พบรายการสินค้าในไฟล์ที่นำเข้า' });
   }
@@ -160,12 +161,12 @@ exports.importParts = async (req, res) => {
     const stock = parsePositiveNumber(row.stock);
     const storageLocation = String(row.storageLocation ?? '').trim();
     if (!name || !category || price === null || price < 0 || costPrice === null || costPrice < 0 || stock === null || !Number.isInteger(stock) || stock < 0) {
-      errors.push({ row: line, message: 'ต้องมีชื่อสินค้า หมวดหมู่ ราคา และสต็อกที่ถูกต้อง' });
+      errors.push({ row: line, name: name || 'ไม่ระบุชื่อ', category, message: 'ต้องมีชื่อสินค้า หมวดหมู่ ราคา และสต็อกที่ถูกต้อง' });
       return;
     }
     const key = `${name.toLowerCase()}|${category.toLowerCase()}`;
     if (fileKeys.has(key)) {
-      errors.push({ row: line, message: 'สินค้าซ้ำกับรายการในไฟล์เดียวกัน' });
+      errors.push({ row: line, name, category, message: 'สินค้าซ้ำกับรายการในไฟล์เดียวกัน' });
       return;
     }
     fileKeys.add(key);
@@ -173,21 +174,48 @@ exports.importParts = async (req, res) => {
   });
 
   let imported = 0;
-  let skipped = 0;
+  let updated = 0;
+  const duplicateDetails = [];
+
   try {
     await prisma.$transaction(async (tx) => {
       for (const row of validRows) {
-        const existing = await tx.part.findFirst({ where: { name: row.name, category: { name: row.category } } });
-        if (existing) {
-          skipped += 1;
-          errors.push({ row: row.line, message: 'มีสินค้าชื่อนี้และหมวดหมู่นี้อยู่แล้ว จึงข้ามรายการ' });
-          continue;
-        }
         const category = await tx.category.upsert({
           where: { name: row.category },
           update: {},
           create: { name: row.category }
         });
+
+        const existing = await tx.part.findFirst({
+          where: { name: row.name, categoryId: category.id }
+        });
+
+        if (existing) {
+          // มีในฐานข้อมูลอยู่แล้ว -> ให้อัปเดตข้อมูล ไม่เพิ่มรายการใหม่ซ้ำ
+          await tx.part.update({
+            where: { id: existing.id },
+            data: {
+              costPrice: row.costPrice,
+              price: row.price,
+              stock: row.stock,
+              storageLocation: row.storageLocation || existing.storageLocation || null,
+              imageUrl: row.imageUrl || existing.imageUrl || null,
+            }
+          });
+          updated += 1;
+          duplicateDetails.push({
+            row: row.line,
+            name: row.name,
+            category: row.category,
+            costPrice: row.costPrice,
+            price: row.price,
+            stock: row.stock,
+            message: 'ตรงกับสินค้าเดิมในฐานข้อมูล (อัปเดตข้อมูลแล้ว)'
+          });
+          continue;
+        }
+
+        // สินค้าใหม่ -> เพิ่มเข้าฐานข้อมูล
         await tx.part.create({
           data: {
             name: row.name,
@@ -202,7 +230,12 @@ exports.importParts = async (req, res) => {
         imported += 1;
       }
     });
-    return res.status(201).json({ imported, skipped, errors });
+    return res.status(201).json({
+      imported,
+      updated,
+      duplicates: duplicateDetails,
+      errors
+    });
   } catch (error) {
     console.error('Part import error:', error);
     return res.status(500).json({ error: 'นำเข้าสินค้าไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองใหม่' });

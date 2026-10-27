@@ -50,8 +50,14 @@ export default function App() {
   // ==================== ดึงข้อมูลทั้งหมดตอนเปิดเว็บ ====================
   useEffect(() => {
     const token = localStorage.getItem('token');
+    const isTrackingPage = Boolean(
+      new URLSearchParams(window.location.search).get('track') || 
+      new URLSearchParams(window.location.search).get('tracking')
+    );
     if (!token || !currentUser) {
-      setActivePage('login');
+      if (!isTrackingPage) {
+        setActivePage('login');
+      }
       return undefined;
     }
 
@@ -63,7 +69,9 @@ export default function App() {
         localStorage.removeItem('user');
         delete axios.defaults.headers.common.Authorization;
         setCurrentUser(null);
-        setActivePage('login');
+        if (!isTrackingPage) {
+          setActivePage('login');
+        }
       });
     return undefined;
   }, []);
@@ -149,6 +157,7 @@ export default function App() {
               posSales={posSales}
               setPosSales={setPosSales}
               mechanics={mechanics}
+              settings={settings}
             />
           ) : (
             <div className="p-8 text-center">
@@ -174,7 +183,6 @@ export default function App() {
               setCategories={setCategories}
               posSales={posSales}
               mechanics={mechanics}
-              settings={settings}
               settings={settings}
               setSettings={setSettings}
             />  

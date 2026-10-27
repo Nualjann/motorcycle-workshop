@@ -16,7 +16,7 @@ const DEFAULTS = {
   defaultWage: '100',
   trackingPrefix: 'RP',
   themeColor: 'blue',
-  lowStockThreshold: '2'
+  lowStockThreshold: '10'
 };
 
 const allowedKeys = new Set(Object.keys(DEFAULTS));

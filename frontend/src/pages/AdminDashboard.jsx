@@ -6,14 +6,15 @@ import {
   Package, Plus, Trash2, Edit2, TrendingUp, DollarSign, ArrowUpDown, ArrowUp, ArrowDown,
   ShoppingBag, Wrench, AlertTriangle, Search, X, Award, 
   FolderPlus, Users, Shield, UserCheck, UserPlus, Lock, AlertCircle, CheckCircle2, Menu, Settings,
-  LayoutDashboard, ClipboardList, CircleDollarSign, Printer
+  LayoutDashboard, ClipboardList, CircleDollarSign, Printer, RefreshCw, FileSpreadsheet,
+  ChevronRight
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS = {
   storeName: 'MotoFix Workshop', storeAddress: '', storePhone: '', taxId: '',
   receiptFooter: 'ขอบคุณที่ใช้บริการ', bankName: '', bankAccountName: '', bankAccountNumber: '',
   paperSize: '80mm', warrantyDays: '7', defaultWage: '100', trackingPrefix: 'RP',
-  themeColor: 'blue', lowStockThreshold: '2'
+  themeColor: 'blue', lowStockThreshold: '10'
 };
 
 function SystemSettingsForm({ settings, setSettings, onSaved }) {
@@ -78,6 +79,9 @@ function SystemSettingsForm({ settings, setSettings, onSaved }) {
           <label className="text-sm font-semibold text-slate-700">รับประกันงานซ่อม (วัน)
             <input type="number" min="0" max="100000" value={form.warrantyDays ?? '7'} onChange={event => updateField('warrantyDays', event.target.value)} className="mt-1.5 w-full border border-slate-300 rounded-md p-2.5 font-normal" />
           </label>
+          <label className="text-sm font-semibold text-slate-700">เกณฑ์แจ้งเตือนสต็อกใกล้หมด (ชิ้น)
+            <input type="number" min="0" max="100000" value={form.lowStockThreshold ?? '10'} onChange={event => updateField('lowStockThreshold', event.target.value)} className="mt-1.5 w-full border border-slate-300 rounded-md p-2.5 font-normal" />
+          </label>
         </div>
       </section>
 
@@ -131,8 +135,9 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
   const [reportDateFrom, setReportDateFrom] = useState('');
   const [reportDateTo, setReportDateTo] = useState('');
   const analyticsPrintRef = useRef(null);
+  const salesPrintRef = useRef(null);
   const handlePrintAnalytics = useReactToPrint({
-    contentRef: analyticsPrintRef,
+    contentRef: salesPrintRef,
     pageStyle: '@page { size: A4; margin: 12mm; }'
   });
   const [isAdminMenuOpen, setIsAdminMenuOpen] = useState(false);
@@ -143,9 +148,10 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
 
   // ==================== CUSTOM ALERTS & CONFIRMS ====================
   const [successAlert, setSuccessAlert] = useState('');
+  const [importResultModal, setImportResultModal] = useState({ isOpen: false, imported: 0, updated: 0, duplicates: [], errors: [] });
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
   const importFileRef = useRef(null);
-  const restoreFileRef = useRef(null);
+    const restoreFileRef = useRef(null);
   const [backupLoading, setBackupLoading] = useState(false);
 
   useEffect(() => {
@@ -320,8 +326,9 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
   });
 
   const topSellingProducts = Object.values(salesMap).sort((a, b) => b.qty - a.qty);
-  const lowStockThreshold = Math.max(0, Number(settings?.lowStockThreshold ?? 2));
-  const lowStockParts = parts.filter(p => p.stock <= lowStockThreshold);
+  const configuredThreshold = Number(settings?.lowStockThreshold);
+  const lowStockThreshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0 ? configuredThreshold : 10;
+  const lowStockParts = parts.filter(p => Number(p.stock) <= lowStockThreshold);
   const totalStockValue = parts.reduce((sum, p) => sum + (p.price * p.stock), 0);
   const pendingJobs = jobs.filter(job => !job.paid && job.status === 'รอคิว');
   const repairingJobs = jobs.filter(job => !job.paid && job.status === 'กำลังซ่อม');
@@ -341,9 +348,20 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
   [...reportPaidJobs, ...reportPosSales].forEach(record => {
     const items = record.partsUsed || record.items || [];
     items.forEach(item => {
-      if (!reportSalesMap[item.name]) reportSalesMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
-      reportSalesMap[item.name].qty += Number(item.qty) || 0;
-      reportSalesMap[item.name].revenue += (Number(item.price) || 0) * (Number(item.qty) || 0);
+      if (!reportSalesMap[item.name]) {
+        reportSalesMap[item.name] = { 
+          name: item.name, 
+          qty: 0, 
+          revenue: 0, 
+          recordedCost: 0 
+        };
+      }
+      const itemQty = Number(item.qty) || 0;
+      const itemPrice = Number(item.price) || 0;
+      const itemCost = Number(item.costPrice || 0);
+      reportSalesMap[item.name].qty += itemQty;
+      reportSalesMap[item.name].revenue += itemPrice * itemQty;
+      reportSalesMap[item.name].recordedCost += itemCost * itemQty;
     });
   });
   const reportTopSellingProducts = Object.values(reportSalesMap).sort((a, b) => b.qty - a.qty);
@@ -368,33 +386,239 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
   }, {});
 
   const exportAnalyticsExcel = () => {
-    const summaryRows = [
-      { รายการ: 'รายได้รวมสุทธิ', จำนวนเงิน: reportTotalRevenue, จำนวนบิล: reportPaidJobs.length + reportPosSales.length },
-      { รายการ: 'รายได้จากงานซ่อม', จำนวนเงิน: reportRepairRevenue, จำนวนบิล: reportPaidJobs.length },
-      { รายการ: 'รายได้จาก POS', จำนวนเงิน: reportPosRevenue, จำนวนบิล: reportPosSales.length }
+    const storeTitle = settings?.storeName || 'MotoFix Workshop';
+    const storeAddr = settings?.storeAddress || '';
+    const storeTel = settings?.storePhone ? `โทร. ${settings.storePhone}` : '';
+    const storeTax = settings?.taxId ? `เลขประจำตัวผู้เสียภาษี: ${settings.taxId}` : '';
+    const dateRangeStr = (reportDateFrom || reportDateTo)
+      ? `ระหว่างวันที่: ${reportDateFrom || 'เริ่มต้น'} ถึง ${reportDateTo || 'ปัจจุบัน'}`
+      : 'ช่วงเวลา: ข้อมูลการขายทั้งหมด';
+    const printDateStr = `วันที่พิมพ์เอกสาร: ${new Date().toLocaleString('th-TH')}`;
+
+    // Map ข้อมูลอะไหล่เพื่อดึงหมวดหมู่และราคาทุนจริง
+    const partMap = {};
+    parts.forEach(p => {
+      partMap[p.name] = p;
+    });
+
+    // -------------------------------------------------------------
+    // SHEET 1: สรุปยอดขายสินค้าและอะไหล่ (แบบทางการ)
+    // -------------------------------------------------------------
+    const totalQtySold = reportTopSellingProducts.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+    const totalRevenueSold = reportTopSellingProducts.reduce((sum, item) => sum + (Number(item.revenue) || 0), 0);
+    let totalCostSold = 0;
+
+    const sheet1Rows = [
+      [storeTitle.toUpperCase()],
+      [storeAddr ? `${storeAddr} ${storeTel}` : (storeTel || 'รายงานประจำสถานประกอบการ')],
+      [storeTax ? storeTax : 'เอกสารสรุปยอดขายสินค้าและบริการ'],
+      [''],
+      ['รายงานสรุปยอดขายแยกตามรายการสินค้าและอะไหล่ (Sales Summary by Product)'],
+      [`${dateRangeStr}    |    ${printDateStr}`],
+      [''],
+      [
+        'ลำดับ',
+        'ชื่อรายการสินค้า / อะไหล่',
+        'หมวดหมู่',
+        'จำนวนที่ขาย (ชิ้น)',
+        'ราคาขายเฉลี่ย (บาท)',
+        'ราคาทุนเฉลี่ย (บาท)',
+        'ยอดขายรวม (บาท)',
+        'ต้นทุนรวม (บาท)',
+        'กำไรขั้นต้น (บาท)',
+        'อัตรากำไร (%)'
+      ]
     ];
-    const paymentRows = Object.entries(reportPaymentBreakdown).map(([วิธีชำระ, ยอดรวม]) => ({ วิธีชำระ, ยอดรวม }));
-    const trendRows = Object.entries(reportByMonth).sort(([a], [b]) => a.localeCompare(b)).map(([เดือน, ยอดขาย]) => ({ เดือน, ยอดขาย }));
-    const topRows = reportTopSellingProducts.slice(0, 5).map((item, index) => ({
-      อันดับ: index + 1,
-      ชื่อสินค้า: item.name,
-      จำนวนที่ขายได้: item.qty,
-      ยอดขายรวม: item.revenue
-    }));
-    const billRows = [
-      ...reportPaidJobs.map(job => ({ ประเภท: 'งานซ่อม', เลขที่: job.tracking, รายละเอียด: job.plate, ยอดรวม: job.total, วันที่: job.date })),
-      ...reportPosSales.map(order => ({ ประเภท: 'POS', เลขที่: order.receiptNo, รายละเอียด: order.paymentMethod, ยอดรวม: order.total, วันที่: order.date }))
+
+    reportTopSellingProducts.forEach((item, index) => {
+      const partInfo = partMap[item.name];
+      const category = partInfo?.category || 'ทั่วไป';
+      const avgPrice = item.qty > 0 ? Math.round(item.revenue / item.qty) : 0;
+      
+      // คำนวณต้นทุน:
+      // 1) ใช้ต้นทุนที่บันทึกไว้ในบิลจริงขณะขาย (item.recordedCost) ถ้ามี
+      // 2) ถ้าไม่มี ให้ดูจากข้อมูลอะไหล่ปัจจุบัน (partInfo.costPrice)
+      // 3) ป้องกันกรณีราคาขายต่ำกว่าต้นทุนผิดปกติจากบิลเก่าที่ราคาขายเดิมน้อยกว่าราคาตลาดปัจจุบัน
+      let totalCost = 0;
+      let unitCost = 0;
+      if (item.recordedCost && item.recordedCost > 0) {
+        totalCost = item.recordedCost;
+        unitCost = Math.round(totalCost / item.qty);
+      } else if (partInfo && Number(partInfo.costPrice) > 0) {
+        const currentPartCost = Number(partInfo.costPrice);
+        // หากราคาทุนปัจจุบันสูงกว่าราคาขายจริงในอดีต (เช่น บิลเก่า 40 บาท แต่ต้นทุนอะไหล่ใหม่ 1,955 บาท)
+        // แสดงว่าบิลเก่าขายด้วยราคาเดิม จึงให้ปรับสัดส่วนต้นทุนตามอัตราส่วนของอะไหล่ปัจจุบัน
+        if (currentPartCost >= avgPrice && Number(partInfo.price) > 0) {
+          const costRatio = currentPartCost / Number(partInfo.price);
+          unitCost = Math.round(avgPrice * costRatio);
+        } else {
+          unitCost = currentPartCost;
+        }
+        totalCost = unitCost * item.qty;
+      }
+
+      const profit = item.revenue - totalCost;
+      const profitMargin = item.revenue > 0 ? ((profit / item.revenue) * 100).toFixed(1) + '%' : '0.0%';
+
+      totalCostSold += totalCost;
+
+      sheet1Rows.push([
+        index + 1,
+        item.name,
+        category,
+        item.qty,
+        avgPrice,
+        unitCost,
+        item.revenue,
+        totalCost,
+        profit,
+        profitMargin
+      ]);
+    });
+
+    const totalProfit = totalRevenueSold - totalCostSold;
+    const totalProfitMargin = totalRevenueSold > 0 ? ((totalProfit / totalRevenueSold) * 100).toFixed(1) + '%' : '0.0%';
+
+    sheet1Rows.push(['']);
+    sheet1Rows.push([
+      'รวมทั้งสิ้น',
+      `รวมทั้งหมด ${reportTopSellingProducts.length} รายการสินค้า`,
+      '-',
+      totalQtySold,
+      '-',
+      '-',
+      totalRevenueSold,
+      totalCostSold,
+      totalProfit,
+      totalProfitMargin
+    ]);
+    sheet1Rows.push(['']);
+    sheet1Rows.push(['', '', '', '', '', 'ลงชื่อผู้จัดทำรายงาน: ......................................................']);
+    sheet1Rows.push(['', '', '', '', '', 'ลงชื่อผู้มีอำนาจอนุมัติ: ......................................................']);
+
+    const ws1 = XLSX.utils.aoa_to_sheet(sheet1Rows);
+    ws1['!cols'] = [
+      { wch: 8 },   // ลำดับ
+      { wch: 38 },  // ชื่อสินค้า
+      { wch: 20 },  // หมวดหมู่
+      { wch: 18 },  // จำนวนที่ขาย
+      { wch: 18 },  // ราคาขายเฉลี่ย
+      { wch: 18 },  // ราคาทุนเฉลี่ย
+      { wch: 20 },  // ยอดขายรวม
+      { wch: 20 },  // ต้นทุนรวม
+      { wch: 20 },  // กำไรขั้นต้น
+      { wch: 16 }   // อัตรากำไร
     ];
+
+    // -------------------------------------------------------------
+    // SHEET 2: สรุปภาพรวมและสถิติทางการเงิน (Financial Executive Summary)
+    // -------------------------------------------------------------
+    const sheet2Rows = [
+      [storeTitle],
+      ['รายงานสรุปภาพรวมรายได้และสถิติการดำเนินงาน (Executive Financial Summary)'],
+      [`${dateRangeStr}    |    ${printDateStr}`],
+      [''],
+      ['ลำดับ', 'หัวข้อการวิเคราะห์และสรุปยอด', 'จำนวนเงิน / ตัวเลขสถิติ', 'หน่วยนับ', 'หมายเหตุ'],
+      ['1', 'รายได้รวมสุทธิทุกช่องทาง (Total Gross Revenue)', reportTotalRevenue, 'บาท', 'รวมทั้งงานซ่อมและหน้าร้าน'],
+      ['2', 'รายได้จากบริการงานซ่อม (Repair Service Revenue)', reportRepairRevenue, 'บาท', `จากรถที่รับบริการส่งมอบแล้ว ${reportPaidJobs.length} คัน`],
+      ['3', 'รายได้จากการจำหน่ายสินค้าหน้าร้าน (POS Revenue)', reportPosRevenue, 'บาท', `จากบิลขายหน้าร้าน ${reportPosSales.length} รายการ`],
+      ['4', 'ต้นทุนค่าอะไหล่รวมโดยประมาณ (Estimated Cost of Goods)', totalCostSold, 'บาท', 'คำนวณจากรายการอะไหล่ที่ขายออก'],
+      ['5', 'กำไรขั้นต้นโดยประมาณ (Gross Profit)', totalProfit, 'บาท', 'รายได้รวม - ต้นทุนค่าอะไหล่'],
+      ['6', 'อัตรากำไรขั้นต้นโดยเฉลี่ย (Gross Margin)', totalProfitMargin, '%', ''],
+      ['7', 'จำนวนธุรกรรม/บิลทั้งหมด (Total Transactions)', reportPaidJobs.length + reportPosSales.length, 'บิล', ''],
+      ['8', 'ยอดขายเฉลี่ยต่อบิล (Average Ticket Size)', (reportPaidJobs.length + reportPosSales.length > 0) ? Math.round(reportTotalRevenue / (reportPaidJobs.length + reportPosSales.length)) : 0, 'บาท/บิล', ''],
+      ['9', 'จำนวนรายการสินค้าที่จำหน่ายได้ (Unique Products Sold)', reportTopSellingProducts.length, 'รายการ', ''],
+      ['10', 'จำนวนชิ้นสินค้าที่จำหน่ายออกทั้งหมด (Total Units Sold)', totalQtySold, 'ชิ้น', ''],
+      [''],
+      ['สรุปยอดรายรับจำแนกตามช่องทางชำระเงิน'],
+      ['ลำดับ', 'วิธีการชำระเงิน', 'ยอดเงินรวม (บาท)', 'สัดส่วน (%)', 'สถานะ'],
+      ['1', 'เงินสด (Cash)', reportPaymentBreakdown['เงินสด'] || 0, reportTotalRevenue > 0 ? (((reportPaymentBreakdown['เงินสด'] || 0) / reportTotalRevenue) * 100).toFixed(1) + '%' : '0.0%', 'รับชำระสมบูรณ์'],
+      ['2', 'เงินโอน / พร้อมเพย์ QR (Bank Transfer)', reportPaymentBreakdown['โอนจ่าย'] || 0, reportTotalRevenue > 0 ? (((reportPaymentBreakdown['โอนจ่าย'] || 0) / reportTotalRevenue) * 100).toFixed(1) + '%' : '0.0%', 'ตรวจสอบแล้ว']
+    ];
+
+    const ws2 = XLSX.utils.aoa_to_sheet(sheet2Rows);
+    ws2['!cols'] = [
+      { wch: 8 },
+      { wch: 45 },
+      { wch: 25 },
+      { wch: 15 },
+      { wch: 35 }
+    ];
+
+    // -------------------------------------------------------------
+    // SHEET 3: บันทึกรายการบิลและใบเสร็จรับเงินทั้งหมด (Transaction Audit Log)
+    // -------------------------------------------------------------
+    const sheet3Rows = [
+      [storeTitle],
+      ['สมุดบันทึกรายการบิลและธุรกรรมการขาย (Sales & Job Transaction Ledger)'],
+      [`${dateRangeStr}    |    ${printDateStr}`],
+      [''],
+      ['ลำดับ', 'ประเภทรายการ', 'เลขที่ใบเสร็จ/ใบงาน', 'ทะเบียนรถ / ลูกค้า', 'ช่างผู้รับผิดชอบ', 'ช่องทางชำระ', 'ยอดเงินรวม (บาท)', 'วัน-เวลาที่ทำรายการ']
+    ];
+
+    let billSeq = 1;
+    reportPaidJobs.forEach(job => {
+      sheet3Rows.push([
+        billSeq++,
+        'งานซ่อม',
+        job.tracking,
+        `${job.plate} (${job.customerName || 'ลูกค้าทั่วไป'})`,
+        job.mechanic || 'ช่างประจำร้าน',
+        job.paymentMethod || 'เงินสด',
+        job.total,
+        job.date
+      ]);
+    });
+
+    reportPosSales.forEach(order => {
+      sheet3Rows.push([
+        billSeq++,
+        'ขายหน้าร้าน POS',
+        order.receiptNo,
+        'ลูกค้าหน้าร้านทั่วไป',
+        '-',
+        order.paymentMethod || 'เงินสด',
+        order.total,
+        order.date
+      ]);
+    });
+
+    sheet3Rows.push(['']);
+    sheet3Rows.push([
+      'รวมยอดบิลทั้งหมด',
+      '-',
+      `${billSeq - 1} รายการ`,
+      '-',
+      '-',
+      '-',
+      reportTotalRevenue,
+      '-'
+    ]);
+
+    const ws3 = XLSX.utils.aoa_to_sheet(sheet3Rows);
+    ws3['!cols'] = [
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 32 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 22 }
+    ];
+
+    // สร้าง Workbook และบันทึก
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'สรุปยอดขาย');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(topRows), 'ขายดี 5 อันดับ');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(paymentRows), 'ช่องทางชำระเงิน');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(trendRows), 'แนวโน้มรายเดือน');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(billRows), 'รายการบิล');
-    XLSX.writeFile(workbook, `motofix-sales-report-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, ws1, 'สรุปยอดขายแยกตามสินค้า');
+    XLSX.utils.book_append_sheet(workbook, ws2, 'สรุปภาพรวมทางการเงิน');
+    XLSX.utils.book_append_sheet(workbook, ws3, 'บันทึกบิลและธุรกรรมทั้งหมด');
+
+    const cleanDate = new Date().toISOString().slice(0, 10);
+    const fileName = `รายงานสรุปยอดขายทางการ_${storeTitle.replace(/[^A-Za-z0-9ก-๙]/g, '_')}_${cleanDate}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+    setSuccessAlert('ส่งออกรายงานสรุปยอดขาย Excel แบบทางการเรียบร้อยแล้ว');
   };
 
-  
   // ==================== CRUD หมวดหมู่ ====================
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -499,12 +723,15 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
       const response = await axios.post('http://localhost:5000/api/parts/import', { rows });
       const partsResponse = await axios.get('http://localhost:5000/api/parts');
       setParts(partsResponse.data);
-      const { imported, skipped, errors = [] } = response.data;
-      setSuccessAlert(`นำเข้าสินค้าสำเร็จ ${imported} รายการ${skipped ? ` ข้ามซ้ำ ${skipped} รายการ` : ''}${errors.length ? ` มีรายการไม่ผ่าน ${errors.length} รายการ` : ''}`);
-      if (errors.length > 0) {
-        const errorSummary = errors.slice(0, 10).map(item => `แถว ${item.row}: ${item.message}`).join('\n');
-        alert(`รายการที่ต้องตรวจสอบ:\n${errorSummary}${errors.length > 10 ? '\nและรายการอื่น ๆ อีก' : ''}`);
-      }
+      const { imported = 0, updated = 0, duplicates = [], errors = [] } = response.data;
+      
+      setImportResultModal({
+        isOpen: true,
+        imported,
+        updated,
+        duplicates,
+        errors
+      });
     } catch (error) {
       alert(error.response?.data?.error || 'ไม่สามารถนำเข้าสินค้าจากไฟล์ได้');
     }
@@ -596,7 +823,7 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
     const matchSearch = !query
       || p.name.toLowerCase().includes(query)
       || p.category.toLowerCase().includes(query);
-    const matchLowStock = onlyLowStock ? p.stock <= lowStockThreshold : true;
+    const matchLowStock = onlyLowStock ? Number(p.stock) <= lowStockThreshold : true;
     return matchCat && matchSearch && matchLowStock;
   });
 
@@ -639,6 +866,100 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
         </div>
       )}
 
+      {/* Modal สรุปผลการนำเข้า & แจ้งรายการที่ซ้ำ/อัปเดต */}
+      {importResultModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[75] animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">สรุปผลการนำเข้า Excel</h3>
+                  <p className="text-xs text-slate-500">ตรวจสอบและอัปเดตข้อมูลลงฐานข้อมูลเรียบร้อย</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setImportResultModal(prev => ({ ...prev, isOpen: false }))}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* สรุปตัวเลข */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-center">
+                  <p className="text-xs text-emerald-600 font-semibold">รายการใหม่ที่เพิ่ม</p>
+                  <p className="text-2xl font-bold text-emerald-700 mt-0.5">{importResultModal.imported} <span className="text-xs font-normal">รายการ</span></p>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
+                  <p className="text-xs text-amber-700 font-semibold">รายการที่ตรงกัน (อัปเดต)</p>
+                  <p className="text-2xl font-bold text-amber-800 mt-0.5">{importResultModal.updated} <span className="text-xs font-normal">รายการ</span></p>
+                </div>
+              </div>
+
+              {/* รายการที่ซ้ำกับฐานข้อมูล */}
+              {importResultModal.duplicates.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                      รายการที่ตรงกับในฐานข้อมูล (ไม่งอกซ้ำ แต่อัปเดตข้อมูลให้):
+                    </span>
+                    <span className="text-xs text-slate-400">{importResultModal.duplicates.length} รายการ</span>
+                  </div>
+                  <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto bg-slate-50/50 text-xs">
+                    {importResultModal.duplicates.map((dup, idx) => (
+                      <div key={idx} className="p-2.5 flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-slate-800">{idx + 1}. {dup.name}</p>
+                          <p className="text-[11px] text-slate-500">หมวดหมู่: {dup.category} · แถวที่ {dup.row}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="inline-block bg-amber-100 text-amber-800 font-semibold px-2 py-0.5 rounded text-[10px]">
+                            ทุน ฿{dup.costPrice} / ขาย ฿{dup.price} (สต็อก: {dup.stock})
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* รายการที่มีข้อผิดพลาด (ถ้ามี) */}
+              {importResultModal.errors.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-rose-600 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    รายการที่มีข้อผิดพลาด (ข้ามไป):
+                  </span>
+                  <div className="border border-rose-200 rounded-lg divide-y divide-rose-100 max-h-36 overflow-y-auto bg-rose-50/30 text-xs text-rose-700">
+                    {importResultModal.errors.map((err, idx) => (
+                      <div key={idx} className="p-2 flex justify-between">
+                        <span>แถวที่ {err.row}: {err.name || ''}</span>
+                        <span className="font-medium">{err.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+              <button 
+                onClick={() => setImportResultModal(prev => ({ ...prev, isOpen: false }))}
+                className="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-5 py-2 rounded-lg text-sm transition shadow-sm"
+              >
+                รับทราบ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 2. Modal ยืนยันการลบ (ตกลง/ยกเลิก) */}
       {confirmDialog.isOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
@@ -670,46 +991,123 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
       {/* ========================================================= */}
       {/* Sidebar เมนู */}
       {/* ========================================================= */}
-      <div className="md:hidden w-full flex justify-start mb-2 relative z-[55]">
-        <button
-          type="button"
+      {/* แถบแฮมเบอร์เกอร์บนมือถือ (Mobile Navigation Header Bar) */}
+      <div className="md:hidden w-full mb-3">
+        <div 
           onClick={() => setIsAdminMenuOpen(true)}
-          className="w-11 h-11 bg-slate-900 text-white rounded-lg flex items-center justify-center shadow-sm"
-          aria-label="เปิดเมนูผู้ดูแลระบบ"
+          className="bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-2.5 px-3.5 shadow-sm flex items-center justify-between cursor-pointer transition active:scale-[0.99]"
         >
-          <Menu className="w-5 h-5" />
-        </button>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm">
+              <Menu className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-slate-400 leading-tight">เมนูผู้ดูแลระบบ</p>
+              <p className="text-sm font-bold text-slate-800 leading-tight mt-0.5">
+                {activeTab === 'dashboard' && 'แดชบอร์ดภาพรวม'}
+                {activeTab === 'stock' && 'คลังสินค้า & อะไหล่'}
+                {activeTab === 'analytics' && 'สรุปยอดขาย'}
+                {activeTab === 'users' && 'จัดการผู้ใช้งานระบบ'}
+                {activeTab === 'settings' && 'ตั้งค่าระบบ'}
+              </p>
+            </div>
+          </div>
+          <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 text-slate-400 flex items-center justify-center">
+            <ChevronRight className="w-4 h-4" />
+          </div>
+        </div>
       </div>
+
+      {/* Backdrop Overlay บนมือถือ */}
       {isAdminMenuOpen && (
         <div
-          className="md:hidden fixed inset-x-0 top-16 bottom-0 z-40 bg-slate-900/40 backdrop-blur-[1px]"
+          className="md:hidden fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
           onClick={() => setIsAdminMenuOpen(false)}
           aria-hidden="true"
         />
       )}
-      <div className={`${isAdminMenuOpen ? 'fixed top-32 left-0 z-50 h-[calc(100vh-8rem)] w-max min-w-[220px] max-w-[85vw] animate-in fade-in slide-in-from-left duration-200' : 'hidden'} md:block md:fixed md:inset-y-0 md:left-0 md:z-10 md:h-auto md:w-64 md:p-0 shrink-0`}>
-        <div className="bg-white border border-slate-200 border-l-4 border-l-blue-600 rounded-none h-full w-full md:w-64 p-3 shadow-2xl flex flex-col gap-2 overflow-y-auto">
-          <div className="hidden md:flex px-3 py-3 text-slate-600 items-center gap-3 whitespace-nowrap">
-            <Menu className="w-5 h-5 shrink-0" />
-            <span className="font-semibold text-sm">เมนูผู้ดูแลระบบ</span>
+
+      {/* Drawer เมนูบนมือถือ & Sidebar บน Desktop */}
+      <aside 
+        className={`
+          ${isAdminMenuOpen ? 'fixed inset-y-0 left-0 z-[75] w-72 max-w-[85vw] animate-in slide-in-from-left duration-200 flex flex-col' : 'hidden'}
+          md:block md:fixed md:inset-y-0 md:left-0 md:z-10 md:h-auto md:w-64 md:p-0 shrink-0
+        `}
+      >
+        <div className="bg-white border-r border-slate-200 h-full w-full p-4 shadow-2xl md:shadow-none flex flex-col gap-2 overflow-y-auto">
+          {/* Header เมนู */}
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold border border-blue-100">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900 leading-tight">เมนูผู้ดูแลระบบ</h4>
+                <p className="text-[11px] text-slate-400 leading-tight">MotoFix Workshop</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsAdminMenuOpen(false)}
+              className="md:hidden p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+              aria-label="ปิดเมนู"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button onClick={() => selectAdminTab('dashboard')} className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <LayoutDashboard className="w-5 h-5 shrink-0" /> <span>แดชบอร์ด</span>
-          </button>
-          <button onClick={() => selectAdminTab('stock')} className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${activeTab === 'stock' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Package className="w-5 h-5 shrink-0" /> <span>คลังสินค้า & อะไหล่</span>
-          </button>
-          <button onClick={() => selectAdminTab('analytics')} className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <TrendingUp className="w-5 h-5 shrink-0" /> <span>สรุปยอดขาย</span>
-          </button>
-          <button onClick={() => selectAdminTab('users')} className={`px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${activeTab === 'users' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Users className="w-5 h-5 shrink-0" /> <span>จัดการผู้ใช้งานระบบ</span>
-          </button>
-          <button onClick={() => selectAdminTab('settings')} className={`mt-auto px-4 py-3 rounded-md font-semibold text-sm flex items-center gap-3 transition whitespace-nowrap ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Settings className="w-5 h-5 shrink-0" /> <span>ตั้งค่า</span>
-          </button>
+
+          {/* รายการเมนูหลัก */}
+          <div className="space-y-1 flex-1">
+            <button 
+              type="button"
+              onClick={() => selectAdminTab('dashboard')} 
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <LayoutDashboard className="w-5 h-5 shrink-0" />
+              <span>แดชบอร์ด</span>
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => selectAdminTab('stock')} 
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${activeTab === 'stock' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Package className="w-5 h-5 shrink-0" />
+              <span>คลังสินค้า & อะไหล่</span>
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => selectAdminTab('analytics')} 
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <TrendingUp className="w-5 h-5 shrink-0" />
+              <span>สรุปยอดขาย</span>
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => selectAdminTab('users')} 
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${activeTab === 'users' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Users className="w-5 h-5 shrink-0" />
+              <span>จัดการผู้ใช้งานระบบ</span>
+            </button>
+          </div>
+
+          {/* เมนูด้านล่าง: ตั้งค่า */}
+          <div className="pt-2 border-t border-slate-100 mt-auto">
+            <button 
+              type="button"
+              onClick={() => selectAdminTab('settings')} 
+              className={`w-full px-3.5 py-3 rounded-lg font-semibold text-sm flex items-center gap-3 transition text-left ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Settings className="w-5 h-5 shrink-0" />
+              <span>ตั้งค่าระบบ</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </aside>
 
       <div className="flex-1 w-full">
         {/* Header แถบบน */}
@@ -739,10 +1137,10 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
                 <p className="text-3xl font-bold text-slate-900 mt-3">{parts.length.toLocaleString()}</p>
                 <p className="text-xs text-slate-400 mt-1">มูลค่าสต็อก ฿{totalStockValue.toLocaleString()}</p>
               </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
+              <div onClick={() => { setOnlyLowStock(true); selectAdminTab('stock'); }} className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm cursor-pointer hover:border-amber-400 transition">
                 <div className="flex items-center justify-between text-sm text-slate-500 font-semibold"><span>อะไหล่ใกล้หมด</span><AlertTriangle className="w-5 h-5 text-amber-500" /></div>
                 <p className="text-3xl font-bold text-amber-600 mt-3">{lowStockParts.length.toLocaleString()}</p>
-                <p className="text-xs text-slate-400 mt-1">คงเหลือไม่เกิน {lowStockThreshold} ชิ้น</p>
+                <p className="text-xs text-slate-400 mt-1">คงเหลือไม่เกิน {lowStockThreshold} ชิ้น (คลิกเพื่อดู)</p>
               </div>
               <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
                 <div className="flex items-center justify-between text-sm text-slate-500 font-semibold"><span>งานซ่อมที่ยังไม่ชำระ</span><Wrench className="w-5 h-5 text-indigo-500" /></div>
@@ -760,7 +1158,7 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
               <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-2">
                   <h3 className="font-bold text-slate-900 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-500" />รายการอะไหล่ใกล้หมด</h3>
-                  <button onClick={() => selectAdminTab('stock')} className="text-sm text-blue-600 hover:text-blue-700 font-semibold">ดูคลังอะไหล่</button>
+                  <button onClick={() => { setOnlyLowStock(true); selectAdminTab('stock'); }} className="text-sm text-blue-600 hover:text-blue-700 font-semibold">ดูคลังอะไหล่</button>
                 </div>
                 {lowStockParts.length ? (
                   <div className="divide-y divide-slate-100">
@@ -843,7 +1241,7 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
               </div>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col lg:flex-row justify-between items-center gap-3">
+            <div className="bg-white border border-slate-200 rounded-lg p-3 sm:p-4 shadow-sm flex flex-col lg:flex-row justify-between items-center gap-3">
               <div className="flex flex-col sm:flex-row items-center gap-2 w-full lg:w-auto flex-1">
                 <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -857,12 +1255,36 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
                   <button onClick={() => setOnlyLowStock(false)} className="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 border border-rose-200 px-3 py-2 rounded-md font-semibold flex items-center gap-1 w-full sm:w-auto justify-center"><X className="w-3.5 h-3.5" /> ล้างตัวกรองใกล้หมด</button>
                 )}
               </div>
-              <div className="flex gap-2 w-full lg:w-auto shrink-0">
-                <button onClick={() => setIsCategoryModalOpen(true)} className="flex-1 lg:flex-none border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-md text-sm flex items-center justify-center gap-1.5 transition"><FolderPlus className="w-4 h-4 text-blue-600" /> จัดการหมวดหมู่</button>
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap lg:flex-nowrap gap-1.5 sm:gap-2 w-full lg:w-auto shrink-0">
+                <button
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="flex-1 lg:flex-none border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm flex items-center justify-center gap-1 sm:gap-1.5 transition"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 shrink-0" />
+                  <span>จัดการหมวดหมู่</span>
+                </button>
                 <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportParts} className="hidden" />
-                <button onClick={() => importFileRef.current?.click()} className="flex-1 lg:flex-none border border-emerald-300 hover:bg-emerald-50 text-emerald-700 font-semibold px-4 py-2 rounded-md text-sm flex items-center justify-center gap-1.5 transition"><Package className="w-4 h-4" /> นำเข้า Excel</button>
-                <button onClick={downloadImportTemplate} className="flex-1 lg:flex-none border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-md text-sm flex items-center justify-center gap-1.5 transition">ไฟล์ตัวอย่าง</button>
-                <button onClick={handleOpenAddModal} className="flex-1 lg:flex-none bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-md text-sm flex items-center justify-center gap-1.5 shadow-sm transition"><Plus className="w-4 h-4" /> เพิ่มสินค้า</button>
+                <button
+                  onClick={() => importFileRef.current?.click()}
+                  className="flex-1 lg:flex-none border border-emerald-300 hover:bg-emerald-50 text-emerald-700 font-semibold px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm flex items-center justify-center gap-1 sm:gap-1.5 transition"
+                >
+                  <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                  <span>นำเข้า Excel</span>
+                </button>
+                <button
+                  onClick={downloadImportTemplate}
+                  className="flex-1 lg:flex-none border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm flex items-center justify-center gap-1 sm:gap-1.5 transition"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
+                  <span>ไฟล์ตัวอย่าง</span>
+                </button>
+                <button
+                  onClick={handleOpenAddModal}
+                  className="flex-1 lg:flex-none bg-blue-600 hover:bg-blue-700 text-white font-semibold px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm flex items-center justify-center gap-1 sm:gap-1.5 shadow-sm transition"
+                >
+                  <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                  <span>เพิ่มสินค้า</span>
+                </button>
               </div>
             </div>
 
@@ -899,10 +1321,10 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
                          <td className="p-4 text-slate-600">{p.storageLocation || '-'}</td>
                          <td className="p-4 text-right font-semibold text-slate-600">฿{(p.costPrice || 0).toLocaleString()}</td>
                          <td className="p-4 text-right font-semibold text-slate-800">฿{p.price.toLocaleString()}</td>
-                        <td className="p-4 text-center font-bold"><span className={p.stock <= lowStockThreshold ? 'text-rose-600' : 'text-slate-800'}>{p.stock}</span></td>
+                        <td className="p-4 text-center font-bold"><span className={Number(p.stock) <= lowStockThreshold ? 'text-rose-600' : 'text-slate-800'}>{p.stock}</span></td>
                         <td className="p-4 text-center">
-                          <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${p.stock === 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : p.stock <= lowStockThreshold ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-                            {p.stock === 0 ? 'สต็อกหมด' : p.stock <= lowStockThreshold ? 'ใกล้หมด' : 'พร้อมจำหน่าย'}
+                          <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${Number(p.stock) === 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : Number(p.stock) <= lowStockThreshold ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                            {Number(p.stock) === 0 ? 'สต็อกหมด' : Number(p.stock) <= lowStockThreshold ? 'ใกล้หมด' : 'พร้อมจำหน่าย'}
                           </span>
                         </td>
                         <td className="p-4 text-right space-x-2">
@@ -947,25 +1369,130 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
 
         {/* --- แท็บ: Analytics --- */}
         {activeTab === 'analytics' && (
-          <div ref={analyticsPrintRef} className="space-y-6">
-            <div className="flex justify-end gap-2 print:hidden">
-              <label className="flex items-center gap-2 text-sm text-slate-600">
-                ตั้งแต่
-                <input type="date" value={reportDateFrom} onChange={event => setReportDateFrom(event.target.value)} className="border border-slate-300 rounded-md px-2 py-2 text-sm" />
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-600">
-                ถึง
-                <input type="date" value={reportDateTo} onChange={event => setReportDateTo(event.target.value)} className="border border-slate-300 rounded-md px-2 py-2 text-sm" />
-              </label>
-              {(reportDateFrom || reportDateTo) && <button type="button" onClick={() => { setReportDateFrom(''); setReportDateTo(''); }} className="border border-slate-300 text-slate-600 rounded-md px-3 py-2 text-sm">ล้างวันที่</button>}
-              <button type="button" onClick={exportAnalyticsExcel} className="border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-md px-4 py-2 text-sm font-semibold">
-                ส่งออก Excel
-              </button>
-              <button type="button" onClick={handlePrintAnalytics} className="bg-slate-900 hover:bg-slate-800 text-white rounded-md px-4 py-2 text-sm font-semibold flex items-center gap-2">
-                <Printer className="w-4 h-4" /> พิมพ์รายงานยอดขาย
-              </button>
+          <div className="space-y-6">
+            {/* กล่องเอกสารทางการสำหรับพิมพ์ (จะถูกดึงไปพิมพ์เมื่อกดปุ่ม ไม่ใช่หน้าเว็บดิบๆ) */}
+            <div style={{ display: 'none' }}>
+              <div ref={salesPrintRef} className="p-8 text-slate-800 font-sans">
+                {/* หัวเอกสาร */}
+                <div className="text-center border-b border-slate-300 pb-4 mb-6">
+                  <h1 className="text-2xl font-bold text-slate-900">{settings?.storeName || 'MotoFix Workshop'}</h1>
+                  <p className="text-sm text-slate-500 mt-1">{settings?.storeAddress || ''} {settings?.storePhone ? `โทร. ${settings.storePhone}` : ''}</p>
+                  <h2 className="text-lg font-bold text-slate-800 mt-3">รายงานสรุปยอดขายสินค้าและบริการ</h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    ช่วงวันที่: <span className="font-semibold text-slate-700">{reportDateFrom || 'เริ่มต้น'} ถึง {reportDateTo || 'ปัจจุบัน'}</span> · วันที่พิมพ์: {new Date().toLocaleString('th-TH')}
+                  </p>
+                </div>
+
+                {/* สรุปยอดรวม 3 ช่อง */}
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <div className="border border-slate-300 rounded p-3 text-center bg-slate-50">
+                    <p className="text-xs text-slate-500 font-semibold">ยอดขายรวมสุทธิ</p>
+                    <p className="text-xl font-bold text-slate-900 mt-1">฿{reportTotalRevenue.toLocaleString()}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{reportPaidJobs.length + reportPosSales.length} บิล</p>
+                  </div>
+                  <div className="border border-slate-300 rounded p-3 text-center bg-slate-50">
+                    <p className="text-xs text-slate-500 font-semibold">งานซ่อม ({reportPaidJobs.length} คัน)</p>
+                    <p className="text-xl font-bold text-slate-900 mt-1">฿{reportRepairRevenue.toLocaleString()}</p>
+                  </div>
+                  <div className="border border-slate-300 rounded p-3 text-center bg-slate-50">
+                    <p className="text-xs text-slate-500 font-semibold">ขายหน้าร้าน POS ({reportPosSales.length} บิล)</p>
+                    <p className="text-xl font-bold text-slate-900 mt-1">฿{reportPosRevenue.toLocaleString()}</p>
+                  </div>
+                </div>
+
+                {/* ตารางสรุปยอดขายแต่ละรายการ */}
+                <div className="mb-6">
+                  <h3 className="font-bold text-sm text-slate-900 mb-2">ตารางสรุปยอดขายแยกตามรายการสินค้าและอะไหล่</h3>
+                  <table className="w-full text-left text-xs border border-slate-300">
+                    <thead className="bg-slate-100 border-b border-slate-300 font-bold">
+                      <tr>
+                        <th className="p-2 border-r border-slate-300 text-center w-12">ลำดับ</th>
+                        <th className="p-2 border-r border-slate-300">ชื่อสินค้า / อะไหล่</th>
+                        <th className="p-2 border-r border-slate-300 text-center w-24">จำนวนที่ขาย</th>
+                        <th className="p-2 border-r border-slate-300 text-right w-28">ราคาเฉลี่ย/ชิ้น</th>
+                        <th className="p-2 text-right w-32">ยอดขายรวม (บาท)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {reportTopSellingProducts.map((item, idx) => (
+                        <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50' : 'bg-white'}>
+                          <td className="p-2 border-r border-slate-300 text-center">{idx + 1}</td>
+                          <td className="p-2 border-r border-slate-300 font-medium">{item.name}</td>
+                          <td className="p-2 border-r border-slate-300 text-center font-bold">{item.qty}</td>
+                          <td className="p-2 border-r border-slate-300 text-right">฿{item.qty > 0 ? Math.round(item.revenue / item.qty).toLocaleString() : 0}</td>
+                          <td className="p-2 text-right font-bold">฿{item.revenue.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      {reportTopSellingProducts.length === 0 && (
+                        <tr><td colSpan="5" className="p-4 text-center text-slate-400">ไม่มีข้อมูลการขายในช่วงเวลานี้</td></tr>
+                      )}
+                    </tbody>
+                    <tfoot className="bg-slate-100 border-t-2 border-slate-300 font-bold">
+                      <tr>
+                        <td colSpan="2" className="p-2 border-r border-slate-300 text-right">รวมยอดขายสินค้าทั้งหมด:</td>
+                        <td className="p-2 border-r border-slate-300 text-center font-bold">{reportTopSellingProducts.reduce((sum, item) => sum + item.qty, 0)}</td>
+                        <td className="p-2 border-r border-slate-300"></td>
+                        <td className="p-2 text-right text-blue-700 font-bold">฿{reportTopSellingProducts.reduce((sum, item) => sum + item.revenue, 0).toLocaleString()}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* ตารางสรุปช่องทางชำระเงิน */}
+                <div className="mb-6">
+                  <h3 className="font-bold text-sm text-slate-900 mb-2">สรุปตามช่องทางชำระเงิน</h3>
+                  <table className="w-full text-left text-xs border border-slate-300">
+                    <thead className="bg-slate-100 border-b border-slate-300 font-bold">
+                      <tr>
+                        <th className="p-2 border-r border-slate-300">ช่องทางชำระ</th>
+                        <th className="p-2 text-right w-40">ยอดเงินรวม (บาท)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {Object.entries(reportPaymentBreakdown).map(([method, amount], idx) => (
+                        <tr key={idx}>
+                          <td className="p-2 border-r border-slate-300 font-medium">{method}</td>
+                          <td className="p-2 text-right font-bold">฿{amount.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* ท้ายเอกสาร */}
+                <div className="pt-8 mt-8 border-t border-slate-200 flex justify-between text-xs text-slate-500">
+                  <p>พิมพ์จากระบบบริหารจัดการร้าน {settings?.storeName || 'MotoFix Workshop'}</p>
+                  <p>ลงชื่อผู้ตรวจสอบ .....................................................</p>
+                </div>
+              </div>
             </div>
-            <p className="hidden print:block text-sm text-slate-600">ช่วงรายงาน: {reportDateFrom || 'ทั้งหมด'} ถึง {reportDateTo || 'ปัจจุบัน'}</p>
+            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  ตั้งแต่:
+                  <input type="date" value={reportDateFrom} onChange={event => setReportDateFrom(event.target.value)} className="border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  ถึง:
+                  <input type="date" value={reportDateTo} onChange={event => setReportDateTo(event.target.value)} className="border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </label>
+                {(reportDateFrom || reportDateTo) && (
+                  <button type="button" onClick={() => { setReportDateFrom(''); setReportDateTo(''); }} className="text-xs text-slate-500 hover:text-slate-800 underline">
+                    ล้างตัวกรอง
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={exportAnalyticsExcel} className="border border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md px-4 py-2 text-sm font-semibold flex items-center gap-2 transition shadow-sm">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> ส่งออกสรุป Excel
+                </button>
+                <button type="button" onClick={handlePrintAnalytics} className="bg-slate-900 hover:bg-slate-800 text-white rounded-md px-4 py-2 text-sm font-semibold flex items-center gap-2 transition shadow-sm">
+                  <Printer className="w-4 h-4" /> พิมพ์รายงานสรุปยอดขาย
+                </button>
+              </div>
+            </div>
+            
+            <p className="hidden print:block text-sm text-slate-600">ช่วงรายงาน: {reportDateFrom || 'เริ่มต้น'} ถึง {reportDateTo || 'ปัจจุบัน'}</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-slate-900 border border-slate-800 text-white rounded-lg p-6 shadow-sm relative overflow-hidden">
                 <div className="absolute top-0 right-0 -mr-4 -mt-4 opacity-10"><DollarSign className="w-32 h-32" /></div>
@@ -1004,7 +1531,7 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
               <div className="lg:col-span-2 bg-white border border-slate-200 rounded-lg p-6 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <h3 className="font-bold text-slate-900 text-base flex items-center gap-2"><Award className="w-5 h-5 text-blue-600" /> สินค้าและอะไหล่ขายดีที่สุด</h3>
-                  <span className="text-xs text-slate-400">เรียงตามจำนวนชิ้น</span>
+                  <span className="text-xs text-slate-400 font-medium">คำนวณจากยอดขายจริง</span>
                 </div>
                 <div className="divide-y divide-slate-100">
                   {reportTopSellingProducts.slice(0, 5).map((item, index) => (
@@ -1020,7 +1547,10 @@ export default function AdminDashboard({ parts, setParts, jobs, categories, setC
               </div>
 
               <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm space-y-4">
-                <h3 className="font-bold text-slate-900 text-base border-b border-slate-100 pb-3">ประวัติบิลที่ปิดยอดล่าสุด</h3>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-slate-900 text-base">ประวัติบิลที่ปิดยอด</h3>
+                  <span className="text-xs text-slate-500 font-medium">{reportPaidJobs.length + reportPosSales.length} บิล</span>
+                </div>
                 <div className="divide-y divide-slate-100 space-y-2 max-h-[400px] overflow-y-auto pr-2">
                   {reportPaidJobs.map(job => (
                     <div key={`job-${job.id}`} className="pt-3 text-xs space-y-1.5">

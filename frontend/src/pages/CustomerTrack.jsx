@@ -25,11 +25,14 @@ export default function CustomerTrack() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const initialTracking = params.get('tracking') || params.get('track');
-    const initialPhone = params.get('phone');
-    if (!initialTracking || !initialPhone) return;
+    const initialTracking = (params.get('tracking') || params.get('track') || '').trim();
+    const initialPhone = (params.get('phone') || '').trim();
+    if (!initialTracking && !initialPhone) return;
     setLoading(true);
-    axios.get(`${API_URL}/api/public/jobs/track?identifier=${encodeURIComponent(initialTracking.trim())}&phone=${encodeURIComponent(initialPhone)}`)
+    const query = initialTracking && initialPhone
+      ? `identifier=${encodeURIComponent(initialTracking)}&phone=${encodeURIComponent(initialPhone)}`
+      : `search=${encodeURIComponent(initialTracking || initialPhone)}`;
+    axios.get(`${API_URL}/api/public/jobs/track?${query}`)
       .then(response => setResults(response.data.length > 0 ? response.data : 'NOT_FOUND'))
       .catch(() => setResults('NOT_FOUND'))
       .finally(() => setLoading(false));
