@@ -518,6 +518,7 @@ export default function StaffWorkspace({
         {mainMode === 'pos' && (
           <div>
             {posStep === 'browse' && (
+              <>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-4">
                   <div className="relative">
@@ -572,9 +573,13 @@ export default function StaffWorkspace({
                         <button
                           onClick={() => addToCart(part)}
                           disabled={part.stock <= 0}
-                          className="mt-3 w-full bg-slate-900 hover:bg-slate-800 text-white py-1.5 rounded-md text-xs font-semibold disabled:opacity-40"
+                          className={`mt-3 w-full py-1.5 rounded-md text-xs font-semibold transition ${
+                            part.stock <= 0
+                              ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                              : 'bg-slate-900 hover:bg-slate-800 text-white active:scale-95'
+                          }`}
                         >
-                          + ใส่ตะกร้า
+                          {part.stock <= 0 ? 'สินค้าหมด' : '+ ใส่ตะกร้า'}
                         </button>
                       </div>
                     ))}
@@ -623,6 +628,37 @@ export default function StaffWorkspace({
                   </div>
                 </div>
               </div>
+
+              {/* แถบตะกร้าลอยสำหรับหน้าจอมือถือ (Mobile Floating Cart Bar) */}
+              {cart.length > 0 && (
+                <div className="lg:hidden fixed bottom-4 inset-x-3 sm:inset-x-6 z-40 animate-in slide-in-from-bottom duration-200">
+                  <div className="bg-slate-900 text-white p-3.5 px-4 rounded-2xl shadow-2xl flex items-center justify-between border border-slate-700/80">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md">
+                          <ShoppingCart className="w-5 h-5" />
+                        </div>
+                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[11px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-slate-900 shadow-sm">
+                          {cart.reduce((sum, item) => sum + item.qty, 0)}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-slate-300 font-medium">ยอดสั่งซื้อ ({cart.reduce((sum, item) => sum + item.qty, 0)} ชิ้น)</p>
+                        <p className="text-lg font-bold text-blue-400 leading-tight">฿{cartTotal.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPosStep('checkout')}
+                      className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-sm flex items-center gap-1.5 shadow-lg shadow-blue-600/30 transition active:scale-95"
+                    >
+                      <span>ชำระเงิน</span>
+                      <ArrowLeft className="w-4 h-4 rotate-180" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
 
             {posStep === 'checkout' && (
@@ -711,6 +747,15 @@ export default function StaffWorkspace({
                     >
                       ยืนยันการชำระเงิน
                     </button>
+                    {!paymentMethod && (
+                      <p className="text-xs text-amber-600 text-center font-medium">* กรุณาเลือกวิธีชำระเงิน (เงินสด หรือ โอนจ่าย)</p>
+                    )}
+                    {paymentMethod === 'cash' && Number(cashReceived) < cartTotal && (
+                      <p className="text-xs text-amber-600 text-center font-medium">* ระบุจำนวนเงินที่รับมาอย่างน้อย ฿{cartTotal.toLocaleString()}</p>
+                    )}
+                    {paymentMethod === 'qr' && (posSlipStatus !== 'verified' || !posSlipRef) && (
+                      <p className="text-xs text-amber-600 text-center font-medium">* กรุณาอัปโหลดสลิปและกดตรวจสอบให้ผ่านก่อน</p>
+                    )}
                   </div>
                 </div>
               </div>
